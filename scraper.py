@@ -1,6 +1,9 @@
+import re
 import time
+import json
 import random
 import pandas as pd
+from bs4 import BeautifulSoup
 from selenium import webdriver
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -8,6 +11,7 @@ from process_zipcodes import process_zip_data
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.common.exceptions import NoSuchElementException
 
 
 def setup_driver():
@@ -23,10 +27,10 @@ def setup_driver():
 def get_sleep_value(a=5, b=15):
     return random.uniform(a, b)
 
-
-
-# Open the search URL
 def open_search_page(driver, search_url, city, state, country):
+    """
+    Runs queries on the website.
+    """
     driver.get(search_url)
     time.sleep(get_sleep_value())  # Allow time for the page to load
     try:
@@ -48,9 +52,9 @@ def open_search_page(driver, search_url, city, state, country):
 
         # Select the correct country radio button
         if country == "United States":
-            country_radio = driver.find_element(By.ID, "__BVID__87")  # United States radio button
+            country_radio = driver.find_element(By.ID, "__BVID__87")
         elif country == "Canada":
-            country_radio = driver.find_element(By.ID, "__BVID__88")  # Canada radio button
+            country_radio = driver.find_element(By.ID, "__BVID__88")
         else:
             raise ValueError("Invalid country: must be 'United States' or 'Canada'")
 
@@ -63,21 +67,170 @@ def open_search_page(driver, search_url, city, state, country):
         time.sleep(get_sleep_value()) 
 
         try:
-            no_results = driver.find_element(By.XPATH, "//p[contains(text(), 'There are no results that match your search')]")
-            if no_results:
-                print(f"No results found for {city}, {state}, {country}")
-                return None  # Return None if no results found
-            else:
-                breakpoint()
-        except:
-            pass
+            driver.find_element(By.XPATH, "//p[contains(text(), 'There are no results that match your search')]")
+            print(f"No results found for {city}, {state}, {country}")
+        except NoSuchElementException:
+            print(f"Results found for {city}, {state}, {country}, proceeding...")
+            hospital_results = process_search_results(driver) # Continue processing results
+            return hospital_results
 
         print(f"Search completed for {city}, {state}, {country}")
-
     except Exception as e:
         print(f"Error while searching for {city}, {state}, {country}: {e}")
         return None
 
+
+def process_search_results(driver):
+    """
+    Extracts search results from the page:
+    - Parses hospital locations from the JavaScript variable.
+    - Extracts URLs from the search results list.
+    - Clicks each hospital, extract more data, and returns.
+    """
+
+    extracted_data = []
+
+    # Step 1: Extract hospital data/locations from JavaScript (inside <script>)
+    try:
+        script_tag = driver.find_element(By.XPATH, "//script[contains(text(), 'var locations')]").get_attribute("innerHTML")
+        match = re.search(r"var locations = (\[.*?\]);", script_tag, re.DOTALL)
+        if not match:
+            print("No location data found in script.")
+            return []
+
+        locations_json = match.group(1)
+        locations = json.loads(locations_json)
+
+        for loc in locations:
+            if "Your Location" in loc.get("name", "N/A"):
+                continue
+            extracted_data.append({
+                "Name": loc.get("name", "N/A"),
+                "Address": loc.get("address", "N/A"),
+                "Phone": loc.get("phone", "N/A"),
+                "Latitude": loc.get("lat", "N/A"),
+                "Longitude": loc.get("lng", "N/A"),
+                "Distance": loc.get("distance", "N/A"),
+                "Practice": loc.get("icon", "N/A"),
+                "URL": "N/A"
+            })
+    except Exception as e:
+        print("Error extracting hospital locations:", e)
+
+    # Step 2: Extract URLs from `hospitalLocatorResultsList` and merge with extracted_data
+    try:
+        hospital_list = driver.find_elements(By.CSS_SELECTOR, "#hospitalLocatorResultsList .col-lg-4.col-md-6.mb-5")
+        for hospital in hospital_list:
+            try:
+                name_element = hospital.find_element(By.CSS_SELECTOR, "a.recno-lookup")
+                name = name_element.text.strip()
+                hospital_url = name_element.get_attribute("href")
+
+                for entry in extracted_data:
+                    if entry["Name"] == name:
+                        entry["URL"] = hospital_url
+                        break
+            except NoSuchElementException:
+                continue
+    except Exception as e:
+        print("Error extracting hospital details:", e)
+
+    # Step 3: Click each hospital link, extract details, then go back
+    for hospital in hospital_list:
+        try:
+            name_element = hospital.find_element(By.CSS_SELECTOR, "a.recno-lookup")
+            name_element.click()
+            time.sleep(get_sleep_value())
+            extracted_data = process_hospital_details(driver, extracted_data)
+            breakpoint()
+            time.sleep(get_sleep_value())
+        except Exception as e:
+            print(f"Error visiting hospital details page: {e}")
+    return extracted_data
+
+
+
+
+def process_hospital_details(driver, extracted_data):
+    """
+    Extracts additional hospital details from the individual hospital page.
+    Updates the corresponding entry in extracted_data.
+    """
+    try:
+        # Get the hospital name from the details page
+        hospital_name_element = driver.find_element(By.CSS_SELECTOR, "h2.hldp_hospital_name")
+        hospital_name = hospital_name_element.text.strip()
+
+        # Find the correct hospital entry in extracted_data
+        for entry in extracted_data:
+            if entry["Name"] == hospital_name:
+                hospital_entry = entry
+                break
+        else:
+            print(f"Hospital '{hospital_name}' not found in extracted_data.")
+            return extracted_data
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        # Step 1: Extract from hospitalLocatorDetailsAboveMap
+        above_map = soup.find("div", id="hospitalLocatorDetailsAboveMap")
+        contact_card_body = above_map.find_all('div', class_='card-body')[-1] if above_map else None
+        if not contact_card_body:
+            print("No 'hospitalLocatorDetailsAboveMap' section found.")
+        else:
+            try:
+                website_element = contact_card_body.find('a', href=True, string=lambda x: x and ':' in x)
+                hospital_entry["Website"] = website_element["href"].strip() if website_element else "N/A"
+            except AttributeError:
+                hospital_entry["Website"] = "N/A"
+            try:
+                phone_element = contact_card_body.find('div', string=lambda x: x and 'Phone' in x)
+                hospital_entry["Phone"] = phone_element.text.strip().split(":")[-1].strip() if phone_element else "N/A"
+            except AttributeError:
+                hospital_entry["Phone"] = "N/A"
+            try:
+                email_element = contact_card_body.find('a', href=lambda href: href and "mailto:" in href)
+                hospital_entry["Email"] = email_element["href"].replace("mailto:", "").strip() if email_element else "N/A"
+            except AttributeError:
+                hospital_entry["Email"] = "N/A"
+            try:
+                social_links = contact_card_body.select("ul.socials1-items a")
+                hospital_entry["Social Media"] = [link["href"].strip() for link in social_links] if social_links else "N/A"
+            except AttributeError:
+                hospital_entry["Social Media"] = "N/A"
+
+        # Step 2: Extract from HospitalLocatorDetailsBelowMap
+        below_map = soup.find("div", id="HospitalLocatorDetailsBelowMap")
+        if not below_map:
+            print("No 'HospitalLocatorDetailsBelowMap' section found.")
+        else:
+            below_cards = below_map.find_all(class_="card")
+            for card in below_cards:
+                try:
+                    title_element = card.find(class_="card-header")
+                    title = title_element.text.strip() if title_element else "N/A"
+                    if title in ('Veterinarians', 'Species Treated'):
+                        ul_element = card.find_next("ul")
+                        hospital_entry[title] = [li.text.strip() for li in ul_element.find_all("li")] if ul_element else []
+                    elif title == 'Hospital Hours':
+                        hours_table = card.find("table")
+                        if hours_table:
+                            hospital_entry[title] = {
+                                row.find_all("td")[0].text.strip(): row.find_all("td")[1].text.strip()
+                                for row in hours_table.find_all("tr")
+                            }
+                        else:
+                            hospital_entry[title] = {}
+                    elif title == "Mission":
+                        mission_text = card.find_next("p")
+                        hospital_entry[title] = mission_text.text.strip() if mission_text else "N/A"
+                except AttributeError:
+                    continue
+        print(f"Extracted additional details for {hospital_name}")
+        driver.back()
+        return extracted_data
+    except Exception as e:
+        print(f"Error processing hospital details page: {e}")
 
 
 # Main execution
@@ -103,7 +256,7 @@ def main():
         else:
             us_df.at[index, "Data"] = str("not found")
             
-        us_df.to_excel(us_zip_path, index=False)
+        # us_df.to_excel(us_zip_path, index=False)
         time.sleep(get_sleep_value())
     
     breakpoint()
