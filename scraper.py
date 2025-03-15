@@ -63,10 +63,7 @@ def open_search_page(driver, search_url, city, state, country):
     """
     logger.info(f"Searching for : {city}, {state}, {country}...")
     driver.get(search_url)
-    WebDriverWait(driver, get_sleep_value(a=15, b=20)).until(
-        lambda driver: driver.execute_script("return document.readyState") == "complete"
-    )
-    time.sleep(get_sleep_value(a=7, b=10))
+    time.sleep(get_sleep_value())
     try:
         search_container = driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
@@ -270,6 +267,7 @@ def process_hospital_details(driver, extracted_data):
                 except AttributeError:
                     continue
         logger.info(f"Extracted additional details for -> {hospital_name}")
+        time.sleep(get_sleep_value(a=2, b=4))
         driver.back()
         return extracted_data, driver
     except Exception as e:
