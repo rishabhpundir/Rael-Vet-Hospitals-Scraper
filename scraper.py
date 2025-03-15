@@ -11,7 +11,9 @@ from bs4 import BeautifulSoup
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from process_zipcodes import process_zip_data
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.support import expected_conditions as EC
 
 
 # Config
@@ -61,16 +63,19 @@ def open_search_page(driver, search_url, city, state, country):
     """
     logger.info(f"Searching for : {city}, {state}, {country}...")
     driver.get(search_url)
-    time.sleep(get_sleep_value())
+    WebDriverWait(driver, get_sleep_value(a=15, b=20)).until(
+        lambda driver: driver.execute_script("return document.readyState") == "complete"
+    )
+    time.sleep(get_sleep_value(a=7, b=10))
     try:
         search_container = driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
-        time.sleep(get_sleep_value(a=3, b=4))
+        time.sleep(get_sleep_value(a=2, b=5))
 
         # Set search radius
         city_input = driver.find_element(By.NAME, "radius")
         city_input.clear()
-        city_input.send_keys("30")
+        city_input.send_keys("20")
         
         # Fill in the city field
         time.sleep(get_sleep_value(a=2, b=5))
@@ -79,7 +84,7 @@ def open_search_page(driver, search_url, city, state, country):
         city_input.send_keys(city)
 
         # Fill in the state field
-        time.sleep(get_sleep_value(a=6, b=10))
+        time.sleep(get_sleep_value(a=2, b=5))
         state_input = driver.find_element(By.NAME, "stateProvince")
         state_input.clear()
         state_input.send_keys(state)
@@ -93,15 +98,16 @@ def open_search_page(driver, search_url, city, state, country):
             raise ValueError("Invalid country: must be 'United States' or 'Canada'")
 
         country_radio.click()
-        time.sleep(get_sleep_value())
+        time.sleep(get_sleep_value(a=3, b=5))
 
         # Click the search button
         search_button = driver.find_element(By.ID, "locator-search")
         search_button.click()
-        time.sleep(get_sleep_value()) 
-
+        WebDriverWait(driver, get_sleep_value(a=15, b=20)).until(
+            EC.presence_of_element_located((By.ID, "hospitalLocatorResults"))
+        )
         try:
-            driver.find_element(By.XPATH, "//p[contains(text(), 'There are no results that match your search')]")
+            driver.find_element(By.XPATH, "//*[contains(text(), 'There are no results')]")
             logger.info(f"No results found for {city}, {state}, {country}")
         except NoSuchElementException:
             logger.info(f"Results found for {city}, {state}, {country}, proceeding...")
@@ -123,6 +129,9 @@ def process_search_results(driver):
     """
 
     extracted_data = []
+    WebDriverWait(driver, get_sleep_value(a=15, b=20)).until(
+        lambda driver: driver.execute_script("return document.readyState") == "complete"
+    )
     time.sleep(get_sleep_value(a=3, b=5))
     # Step 1: Extract hospital data/locations from JavaScript (inside <script>)
     try:
@@ -154,7 +163,6 @@ def process_search_results(driver):
     # Step 2: Extract hospital names & URLs from `hospitalLocatorResultsList` and merge with extracted_data
     try:
         hospital_names = []
-
         hospital_list = driver.find_elements(By.CSS_SELECTOR, "#hospitalLocatorResultsList .col-lg-4.col-md-6.mb-5")
         for hospital in hospital_list:
             try:
@@ -167,18 +175,19 @@ def process_search_results(driver):
         logger.error("Error extracting hospital details:", e)
 
     # Step 3: Click each hospital link, extract details, then go back
+    logger.info(f"Hospital Names : {hospital_names}")
     for hospital_name in hospital_names:
         logger.info(f"Extracting details for -> {hospital_name}...")
         try:
-            time.sleep(get_sleep_value(a=1, b=3))
+            time.sleep(get_sleep_value(a=3, b=5))
             search_container = driver.find_element(By.ID, "hospitalLocatorResultsList")
             driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
-            time.sleep(get_sleep_value(a=2, b=5))
+            time.sleep(get_sleep_value(a=3, b=5))
             name_element = driver.find_element(By.XPATH, f"//a[@class='recno-lookup']//strong[text()='{hospital_name}']")
             name_element.click()
-            time.sleep(get_sleep_value())
+            time.sleep(get_sleep_value(a=3, b=5))
             extracted_data, driver = process_hospital_details(driver, extracted_data)
-            time.sleep(get_sleep_value())
+            time.sleep(get_sleep_value(a=3, b=5))
         except Exception as e:
             logger.error(f"Error visiting hospital details page: {e}")
     return extracted_data
@@ -188,7 +197,9 @@ def process_hospital_details(driver, extracted_data):
     Extracts additional hospital details from the individual hospital page.
     Updates the corresponding entry in extracted_data.
     """
-    time.sleep(get_sleep_value())
+    WebDriverWait(driver, get_sleep_value(a=15, b=20)).until(
+        EC.presence_of_element_located((By.CLASS_NAME, "hldp_hospital_name"))
+    )
     try:
         # Get the hospital name from the details page
         hospital_name_element = driver.find_element(By.CLASS_NAME, "hldp_hospital_name")
@@ -292,7 +303,27 @@ def save_to_excel(extracted_data, filename="hospital_data"):
         df[col] = df[col].apply(lambda x: "; ".join(x) if isinstance(x, list) else str(x) if isinstance(x, dict) else x)
     df.to_excel(file_path, index=False)
     logger.info(f"Data successfully saved to : {file_path}")
+    
+def process_country_df(driver, search_url:str, df_dict:dict):
+    for country, df_list in df_dict.items():
+        df = df_list[0]
+        df_path = df_list[1]
+        for index, row in df.iterrows():
+            if row['Data'] != "":
+                continue
+            city, state = row["City"], row["State"]
+            extracted_data = open_search_page(driver=driver, search_url=search_url, 
+                            city=city, state=state, country=country)
+            if extracted_data:
+                uniform_data = standardize_extracted_data(extracted_data=extracted_data)
+                save_to_excel(extracted_data=uniform_data, filename=f"{city}_{state}")
+                df.at[index, "Data"] = str("added")
+            else:
+                df.at[index, "Data"] = str("not found")
 
+            df.to_excel(df_path, index=False)
+            time.sleep(get_sleep_value(a=2, b=4))
+            
 # Main execution
 def scraper():
     try:
@@ -302,23 +333,9 @@ def scraper():
         us_df = pd.read_excel(us_zip_path)
         can_df = pd.read_excel(can_zip_path)
         us_df["Data"] = us_df["Data"].astype("object").fillna("")
-        for index, row in us_df.iterrows():
-            country = "United States"
-            if row['Data'] != "":
-                continue
-            city, state = row["City"], row["State"]
-            extracted_data = open_search_page(driver=driver, search_url=search_url, 
-                            city=city, state=state, country=country)
-            if extracted_data:
-                uniform_data = standardize_extracted_data(extracted_data=extracted_data)
-                save_to_excel(extracted_data=uniform_data, filename=f"{city}_{state}")
-                us_df.at[index, "Data"] = str("added")
-            else:
-                us_df.at[index, "Data"] = str("not found")
-
-            us_df.to_excel(us_zip_path, index=False)
-            time.sleep(get_sleep_value(a=5, b=7))
-
+        can_df["Data"] = us_df["Data"].astype("object").fillna("")
+        df_dict = {"United States": [us_df, us_zip_path], "Canada": [can_df, can_zip_path]}
+        process_country_df(driver=driver, search_url=search_url, df_dict=df_dict)
         driver.quit()
         logger.info("Browser closed.")
     except Exception as e:
