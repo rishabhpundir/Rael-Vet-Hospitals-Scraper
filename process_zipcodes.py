@@ -2,6 +2,9 @@ import os
 import pandas as pd
 
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 # Function to save data to Excel
 def save_to_excel(data, filename):
     df = pd.DataFrame(data)
@@ -25,7 +28,7 @@ def normalize_zip_data(us_zip_df, can_zip_df):
 
 # Main execution
 def process_zip_data():
-    zip_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'zipcodes')
+    zip_folder = os.path.join(BASE_DIR, 'zipcodes')
     us_zip_csv_path = os.path.join(zip_folder, 'USZIPCodes202503.csv')
     can_zip_csv_path = os.path.join(zip_folder, 'CanadianPostalCodes202403.csv')
     us_zip_processed_path = os.path.join(zip_folder, 'USZIPCodes202503_Processed.xlsx')

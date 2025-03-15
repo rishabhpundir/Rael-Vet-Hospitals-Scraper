@@ -1,4 +1,5 @@
 import re
+import os
 import time
 import json
 import random
@@ -14,13 +15,23 @@ from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import NoSuchElementException
 
 
+# Config
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+COLUMNS = (
+    "Name", "Address", "Phone", "Latitude", "Longitude", 
+    "Distance", "Practice", "Website", "Email", "Social Media", 
+    "Veterinarians", "Species Treated", "Hospital Hours", "Mission"
+)
+
+
 def setup_driver():
     options = uc.ChromeOptions()
     options.add_argument("--disable-blink-features=AutomationControlled")  
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--start-maximized")
-
     driver = uc.Chrome(options=options, use_subprocess=True)  
     return driver
 
@@ -29,15 +40,14 @@ def get_sleep_value(a=5, b=15):
 
 def open_search_page(driver, search_url, city, state, country):
     """
-    Runs queries on the website.
+    Runs queries on the website, fills in search and gets results.
     """
     driver.get(search_url)
-    time.sleep(get_sleep_value())  # Allow time for the page to load
+    time.sleep(get_sleep_value())
     try:
-        # Scroll the search form into view
         search_container = driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
         driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
-        time.sleep(get_sleep_value())  # Allow scrolling animation to complete
+        time.sleep(get_sleep_value())
 
         # Fill in the city field
         city_input = driver.find_element(By.NAME, "city")
@@ -89,7 +99,7 @@ def process_search_results(driver):
     """
 
     extracted_data = []
-
+    time.sleep(get_sleep_value()) 
     # Step 1: Extract hospital data/locations from JavaScript (inside <script>)
     try:
         script_tag = driver.find_element(By.XPATH, "//script[contains(text(), 'var locations')]").get_attribute("innerHTML")
@@ -112,53 +122,46 @@ def process_search_results(driver):
                 "Longitude": loc.get("lng", "N/A"),
                 "Distance": loc.get("distance", "N/A"),
                 "Practice": loc.get("icon", "N/A"),
-                "URL": "N/A"
             })
     except Exception as e:
         print("Error extracting hospital locations:", e)
 
-    # Step 2: Extract URLs from `hospitalLocatorResultsList` and merge with extracted_data
+    # Step 2: Extract hospital names & URLs from `hospitalLocatorResultsList` and merge with extracted_data
     try:
+        hospital_names = []
+
         hospital_list = driver.find_elements(By.CSS_SELECTOR, "#hospitalLocatorResultsList .col-lg-4.col-md-6.mb-5")
         for hospital in hospital_list:
             try:
                 name_element = hospital.find_element(By.CSS_SELECTOR, "a.recno-lookup")
                 name = name_element.text.strip()
-                hospital_url = name_element.get_attribute("href")
-
-                for entry in extracted_data:
-                    if entry["Name"] == name:
-                        entry["URL"] = hospital_url
-                        break
+                hospital_names.append(name)
             except NoSuchElementException:
                 continue
     except Exception as e:
         print("Error extracting hospital details:", e)
 
     # Step 3: Click each hospital link, extract details, then go back
-    for hospital in hospital_list:
+    for hospital_name in hospital_names:
         try:
-            name_element = hospital.find_element(By.CSS_SELECTOR, "a.recno-lookup")
+            name_element = driver.find_element(By.XPATH, f"//a[@class='recno-lookup']//strong[text()='{hospital_name}']")
             name_element.click()
             time.sleep(get_sleep_value())
-            extracted_data = process_hospital_details(driver, extracted_data)
-            breakpoint()
+            extracted_data, driver = process_hospital_details(driver, extracted_data)
             time.sleep(get_sleep_value())
         except Exception as e:
             print(f"Error visiting hospital details page: {e}")
     return extracted_data
-
-
-
 
 def process_hospital_details(driver, extracted_data):
     """
     Extracts additional hospital details from the individual hospital page.
     Updates the corresponding entry in extracted_data.
     """
+    time.sleep(get_sleep_value())
     try:
         # Get the hospital name from the details page
-        hospital_name_element = driver.find_element(By.CSS_SELECTOR, "h2.hldp_hospital_name")
+        hospital_name_element = driver.find_element(By.CLASS_NAME, "hldp_hospital_name")
         hospital_name = hospital_name_element.text.strip()
 
         # Find the correct hospital entry in extracted_data
@@ -168,7 +171,7 @@ def process_hospital_details(driver, extracted_data):
                 break
         else:
             print(f"Hospital '{hospital_name}' not found in extracted_data.")
-            return extracted_data
+            return extracted_data, driver
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
@@ -228,37 +231,65 @@ def process_hospital_details(driver, extracted_data):
                     continue
         print(f"Extracted additional details for {hospital_name}")
         driver.back()
-        return extracted_data
+        return extracted_data, driver
     except Exception as e:
         print(f"Error processing hospital details page: {e}")
+        
+def standardize_extracted_data(extracted_data):
+    """
+    Ensures all dictionaries in extracted_data have the same keys.
+    Missing keys are added using the predefined COLUMNS tuple.
+    """
+    for entry in extracted_data:
+        for key in COLUMNS:
+            if key not in entry:
+                if key in ["Veterinarians", "Species Treated", "Social Media"]:
+                    entry[key] = []
+                elif key == "Hospital Hours":
+                    entry[key] = {}
+                else:
+                    entry[key] = "N/A"
+    return extracted_data
 
+def save_to_excel(extracted_data, filename="hospital_data"):
+    """
+    Saves extracted_data (list of dicts) into an Excel file.
+    Converts lists and dictionaries into readable string formats.
+    """
+    
+    df = pd.DataFrame(extracted_data)
+    for col in df.columns:
+        df[col] = df[col].apply(lambda x: "; ".join(x) if isinstance(x, list) 
+                                else str(x) if isinstance(x, dict) else x)
+    df.to_excel(filename, index=False)
+    print(f"Data successfully saved to {filename}")
 
 # Main execution
 def main():
     search_url = "https://www.aaha.org/for-pet-parents/find-an-aaha-accredited-animal-hospital-near-me/"
     us_zip_path, can_zip_path = process_zip_data()
-    
     driver = setup_driver()
     us_df = pd.read_excel(us_zip_path)
     can_df = pd.read_excel(can_zip_path)
-
     us_df["Data"] = us_df["Data"].astype("object").fillna("")
     for index, row in us_df.iterrows():
         country = "United States"
         if row['Data'] != "":
             continue
         city, state = row["City"], row["State"]
-        success = open_search_page(driver=driver, search_url=search_url, 
+        extracted_data = open_search_page(driver=driver, search_url=search_url, 
                          city=city, state=state, country=country)
-
-        if success is not None:
+        uniform_data = standardize_extracted_data(extracted_data=extracted_data)
+        save_to_excel(extracted_data=uniform_data)
+        breakpoint()
+        if extracted_data is not None:
             us_df.at[index, "Data"] = str("added")
         else:
             us_df.at[index, "Data"] = str("not found")
             
         # us_df.to_excel(us_zip_path, index=False)
         time.sleep(get_sleep_value())
-    
+
     breakpoint()
     driver.quit()
     print("Browser closed.")
