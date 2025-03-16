@@ -127,91 +127,74 @@ class AahaScraper:
         If the WebDriver crashes, it automatically restarts.
         """
         logger.info(f"Searching for: {city}, {state}, {country}...")
-        for attempt in range(max_retries):
-            try:
-                driver.get(search_url)
-                time.sleep(self.get_sleep_value())
-                search_container = driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
-                driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
-                time.sleep(self.get_sleep_value(a=3, b=5))
+        try:
+            driver.get(search_url)
+            time.sleep(self.get_sleep_value())
+            search_container = driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
+            driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
+            time.sleep(self.get_sleep_value(a=5, b=8))
 
-                # Set search radius
-                city_input = driver.find_element(By.NAME, "radius")
-                city_input.clear()
-                city_input.send_keys("20")
-                
-                # Fill in the city field
-                time.sleep(self.get_sleep_value(a=5, b=8))
-                city_input = driver.find_element(By.NAME, "city")
-                city_input.clear()
-                city_input.send_keys(city)
+            # Set search radius
+            city_input = driver.find_element(By.NAME, "radius")
+            city_input.clear()
+            city_input.send_keys("20")
+            
+            # Fill in the city field
+            time.sleep(self.get_sleep_value(a=5, b=8))
+            city_input = driver.find_element(By.NAME, "city")
+            city_input.clear()
+            city_input.send_keys(city)
 
-                # Fill in the state field
-                time.sleep(self.get_sleep_value(a=5, b=8))
-                state_input = driver.find_element(By.NAME, "stateProvince")
-                state_input.clear()
-                state_input.send_keys(state)
+            # Fill in the state field
+            time.sleep(self.get_sleep_value(a=5, b=8))
+            state_input = driver.find_element(By.NAME, "stateProvince")
+            state_input.clear()
+            state_input.send_keys(state)
 
-                # Select the correct country radio button
-                country_radio_id = "__BVID__87" if country == "United States" else "__BVID__88"
-                country_radio = driver.find_element(By.ID, country_radio_id)
-                country_radio.click()
-                time.sleep(self.get_sleep_value(a=5, b=8))
+            # Select the correct country radio button
+            country_radio_id = "__BVID__87" if country == "United States" else "__BVID__88"
+            country_radio = driver.find_element(By.ID, country_radio_id)
+            country_radio.click()
+            time.sleep(self.get_sleep_value(a=6, b=8))
 
-                # Click the search button
-                search_button = driver.find_element(By.ID, "locator-search")
-                search_button.click()
-                time.sleep(self.get_sleep_value(a=6, b=9))
-
-                # Check if no results were found
-                try:
-                    driver.find_element(By.XPATH, "//*[contains(text(), 'There are no results')]")
-                    logger.info(f"No results found for {city}, {state}, {country}")
-                except NoSuchElementException:
-                    logger.info(f"Results found for {city}, {state}, {country}, proceeding...")
-                    hospital_results = self.process_search_results(driver)
-                    return hospital_results
-
-                logger.info(f"Search completed for {city}, {state}, {country}")
+            # Click the search button
+            search_button = driver.find_element(By.ID, "locator-search")
+            search_button.click()
+            time.sleep(self.get_sleep_value(a=12, b=15))
+            results_soup = BeautifulSoup(driver.page_source, "html.parser")
+            list_exists = results_soup.find(id="hospitalLocatorResultsList") is not None
+            if list_exists:
+                logger.info(f"Results found for {city}, {state}, {country}, proceeding...")
+                hospital_results = self.process_search_results(driver, results_soup)
+                return hospital_results
+            else:
+                logger.info(f"No results found for {city}, {state}, {country}")
                 return None
-
-            except (WebDriverException, TimeoutException) as e:
-                logger.error(f"WebDriver crash or timeout while searching for {city}, {state}, {country}: {e}")
-                
-                # Restart driver and retry
-                logger.info(f"Restarting WebDriver (Attempt {attempt + 1}/{max_retries})...")
-                driver.quit()
-                time.sleep(self.get_sleep_value(a=7, b=10))
-                driver = self.setup_driver()
-        
-        logger.error(f"Failed to search for {city}, {state}, {country} after {max_retries} attempts.")
-        return None
+        except Exception as e:
+            logger.error(f"Failed to search for {city}, {state}, {country}")
+            return None
             
 
-    def process_search_results(self, driver):
+    def process_search_results(self, driver, results_soup):
         """
         Extracts search results from the page:
-        - Parses hospital locations from the JavaScript variable.
-        - Extracts URLs from the search results list.
-        - Clicks each hospital, extract more data, and returns.
+        - Extracts JavaScript variable `var locations` from the page source.
+        - Parses it into JSON and returns structured data.
         """
-
         extracted_data = []
-        WebDriverWait(driver, self.get_sleep_value(a=15, b=20)).until(
-            lambda driver: driver.execute_script("return document.readyState") == "complete"
-        )
-        time.sleep(self.get_sleep_value())
-        # Step 1: Extract hospital data/locations from JavaScript (inside <script>)
+        time.sleep(self.get_sleep_value(a=12, b=15))
         try:
-            try:
-                script_tag = driver.find_element(By.XPATH, "//script[contains(text(), 'var locations')]").get_attribute("innerHTML")
-                match = re.search(r"var locations = (\[.*?\]);", script_tag, re.DOTALL)
-            except NoSuchElementException:
-                logger.error("No location data found in script.")
+            # Ensure the page is fully loaded
+            WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.ID, "hospitalLocatorResultsList")))
+            page_source = driver.page_source
+            match = re.search(r"var locations\s*=\s*(\[[\s\S]*?\]);", page_source)
+            if not match:
+                logger.error("No location data found in page source.")
                 return []
 
             locations_json = match.group(1)
             locations = json.loads(locations_json)
+            logger.info(f"JS match found --> {locations}")
 
             for loc in locations:
                 if "Your Location" in loc.get("name", "N/A"):
@@ -231,11 +214,10 @@ class AahaScraper:
         # Step 2: Extract hospital names & URLs from `hospitalLocatorResultsList` and merge with extracted_data
         try:
             hospital_names = []
-            hospital_list = driver.find_elements(By.CSS_SELECTOR, "#hospitalLocatorResultsList .col-lg-4.col-md-6.mb-5")
+            hospital_list = results_soup.find("div", id="hospitalLocatorResultsList").find_all(class_='recno-lookup')
             for hospital in hospital_list:
                 try:
-                    name_element = hospital.find_element(By.CSS_SELECTOR, "a.recno-lookup")
-                    name = name_element.text.strip()
+                    name = hospital.text.strip()
                     hospital_names.append(name)
                 except NoSuchElementException:
                     continue
@@ -247,7 +229,7 @@ class AahaScraper:
         for hospital_name in hospital_names:
             logger.info(f"Extracting details for -> {hospital_name}...")
             try:
-                time.sleep(self.get_sleep_value(a=4, b=7))
+                time.sleep(self.get_sleep_value())
                 search_container = driver.find_element(By.ID, "hospitalLocatorResultsList")
                 driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
                 time.sleep(self.get_sleep_value(a=4, b=7))
@@ -255,7 +237,7 @@ class AahaScraper:
                 name_element.click()
                 time.sleep(self.get_sleep_value(a=4, b=7))
                 extracted_data, driver = self.process_hospital_details(driver, extracted_data)
-                time.sleep(self.get_sleep_value(a=4, b=7))
+                
             except Exception as e:
                 logger.error(f"Error visiting hospital details page: {e}")
         return extracted_data
@@ -266,15 +248,14 @@ class AahaScraper:
         Extracts additional hospital details from the individual hospital page.
         Updates the corresponding entry in extracted_data.
         """
-        WebDriverWait(driver, self.get_sleep_value(a=15, b=20)).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "hldp_hospital_name"))
-        )
+        time.sleep(self.get_sleep_value(a=15, b=17))
+        WebDriverWait(driver, 15).until(EC.presence_of_element_located((By.CLASS_NAME, "hldp_hospital_name")))
         try:
             # Get the hospital name from the details page
             hospital_name_element = driver.find_element(By.CLASS_NAME, "hldp_hospital_name")
             hospital_name = hospital_name_element.text.strip()
 
-            # Find the correct hospital entry in extracted_data
+            # Find the correct hospital entry in extracted_data\
             for entry in extracted_data:
                 if entry["Name"] == hospital_name:
                     hospital_entry = entry
@@ -388,21 +369,31 @@ class AahaScraper:
             df_path = df_list[1]
 
             for index, row in df.iterrows():
+                time.sleep(self.get_sleep_value(a=1, b=3))
+                driver.maximize_window()
+                time.sleep(self.get_sleep_value(a=1, b=3))
+                driver.execute_script("window.focus();")
+                success = False
                 if row['Data'].strip() in ("added", "not found"):
                     continue
                 city, state = row["City"], row["State"]
+                logger.info("*" * 50)
                 logger.info(f"{index}. --> {city}, {state}")
 
                 # Check if driver is still active
-                if not driver or not driver.session_id:
+                if driver is None or not driver.session_id:
                     logger.warning("WebDriver session is invalid or closed. Restarting driver...")
+                    if driver is not None:
+                        driver.quit()
                     driver = self.setup_driver()
+                    time.sleep(self.get_sleep_value(a=1, b=3))
+                    driver.maximize_window()
+                    time.sleep(self.get_sleep_value(a=1, b=3))
+                    driver.execute_script("window.focus();")
                     if not driver:
                         logger.error("Failed to restart driver. Skipping iteration.")
                         continue
                 try:
-                    driver.maximize_window()
-                    driver.execute_script("window.focus();")
                     extracted_data = self.open_search_page(driver, search_url, city, state, country)
                     if extracted_data:
                         uniform_data = self.standardize_extracted_data(extracted_data)
@@ -410,12 +401,17 @@ class AahaScraper:
                         df.at[index, "Data"] = "added"
                     else:
                         df.at[index, "Data"] = "not found"
+                    success = True
+                except KeyboardInterrupt:
+                    logger.warning("Script interrupted manually. Skipping save operation.")
+                    raise
                 except Exception as e:
                     logger.error(f"Error while processing {city}, {state}: {e}")
                     df.at[index, "Data"] = "error"
                 finally:
-                    df.to_excel(df_path, index=False)
-                    time.sleep(3)
+                    if success or df.at[index, "Data"] in ("not found", "error"):
+                        df.to_excel(df_path, index=False)
+                        time.sleep(3)
 
         # Ensure driver is closed after the loop ends
         if driver:
