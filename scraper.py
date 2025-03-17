@@ -71,7 +71,7 @@ class AahaScraper:
         options.add_argument("--disable-ipc-flooding-protection")
 
         # Clean up old Chrome processes before launching a new one
-        self.cleanup_chrome_processes()
+        # self.cleanup_chrome_processes()
 
         # Retry mechanism for driver initialization
         for attempt in range(retries):
@@ -84,12 +84,24 @@ class AahaScraper:
                 })
 
                 # Stealth mode
+                if platform.system() == "Darwin":  # macOS
+                    vendor = "Apple Computer, Inc."
+                    platform_value = "MacIntel"
+                    webgl_vendor = "Apple Inc."
+                    renderer = "Apple M1" if "arm" in platform.processor().lower() else "Intel HD Graphics 6000"
+                else:
+                    vendor = "Google Inc."
+                    platform_value = "Win64" # Windows
+                    webgl_vendor = "Intel Inc."
+                    renderer = "Intel Iris OpenGL Engine"
+
+                # Apply stealth settings
                 stealth(driver,
                     languages=["en-US", "en"],
-                    vendor="Google Inc.",
-                    platform="Win64",
-                    webgl_vendor="Intel Inc.",
-                    renderer="Intel Iris OpenGL Engine",
+                    vendor=vendor,
+                    platform=platform_value,
+                    webgl_vendor=webgl_vendor,
+                    renderer=renderer,
                     fix_hairline=True,
                 )
 
@@ -367,16 +379,17 @@ class AahaScraper:
         for country, df_list in df_dict.items():
             df = df_list[0]
             df_path = df_list[1]
-
+            zip_folder = os.path.join(BASE_DIR, 'zipcodes')
+            us_zip_processed_path = os.path.join(zip_folder, f'{country}_Processed_Backup.xlsx')
             for index, row in df.iterrows():
+                success = False
+                city, state = row["City"], row["State"]
+                if row['Data'].strip() in ("added", "not found"):
+                    continue
                 time.sleep(self.get_sleep_value(a=1, b=3))
                 driver.maximize_window()
                 time.sleep(self.get_sleep_value(a=1, b=3))
                 driver.execute_script("window.focus();")
-                success = False
-                if row['Data'].strip() in ("added", "not found"):
-                    continue
-                city, state = row["City"], row["State"]
                 logger.info("*" * 50)
                 logger.info(f"{index}. --> {city}, {state}")
 
@@ -411,6 +424,7 @@ class AahaScraper:
                 finally:
                     if success or df.at[index, "Data"] in ("not found", "error"):
                         df.to_excel(df_path, index=False)
+                        df.to_excel(us_zip_processed_path, index=False)
                         time.sleep(3)
 
         # Ensure driver is closed after the loop ends
