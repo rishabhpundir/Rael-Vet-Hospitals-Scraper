@@ -267,10 +267,10 @@ class AahaScraper:
 
         # Step 3: Click each hospital link, extract details, then go back
         logger.info(f"Hospital Names : {hospital_names}")
+        wait_time = 20
         for index, hospital_name in enumerate(hospital_names, start=1):
-            wait_time = 20
             if index % 4 == 0 and wait_time <= 45:
-                wait_time += 5
+                wait_time += 4
                 logger.info(f"Wait time increased to --> {wait_time}")
                 
             extracted = False
