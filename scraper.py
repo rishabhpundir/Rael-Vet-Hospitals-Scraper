@@ -54,15 +54,20 @@ class AahaScraper:
     def __init__(self):
         """Sets up an undetected ChromeDriver with improved stability and cleanup."""
         self.options = uc.ChromeOptions()
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Mobile Safari/537.36",
+            "Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Mobile Safari/537.36"
+        ]
 
-        if os.name == "nt":
-            p = psutil.Process(os.getpid())  
-            p.nice(psutil.HIGH_PRIORITY_CLASS)
-        else:
-            os.nice(-10)  
-
+        # Pick a random User-Agent
+        self.random_user_agent = random.choice(self.user_agents)
+        
         # Essential Anti-Bot Flags
         # self.options.add_argument("--headless=new")
+        self.options.add_argument(f"user-agent={self.random_user_agent}")
         self.options.add_argument("--no-sandbox")
         self.options.add_argument("--disable-gpu")
         self.options.add_argument("--start-maximized")
@@ -106,6 +111,9 @@ class AahaScraper:
                 self.city = ""
                 self.state = ""
                 self.country = ""
+
+                logger.info(f"Current Browser version ---> {self.driver.capabilities['browserVersion']}")
+                logger.info(f"Chrome Driver's version ---> {self.driver.capabilities['chrome']['chromedriverVersion'].split(' ')[0]}")
                 break  # Exit loop on success
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1}: Failed to initialize driver - {e}")
@@ -140,16 +148,14 @@ class AahaScraper:
         logger.info(f"Searching for: {self.city}, {self.state}, {self.country}...")
         try:
             self.driver.get(self.search_url)
-            time.sleep(self.get_sleep_value(a=4, b=5))
-            # search_container = self.driver.find_element(By.ID, "hospitalLocatorSearchCriteria")
+            time.sleep(self.get_sleep_value(a=8, b=10))
             search_container = WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.ID, "hospitalLocatorSearchCriteria"))
             )
             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
 
             # Search radius
-            time.sleep(self.get_sleep_value(a=5, b=10))
-            # city_input = self.driver.find_element(By.NAME, "radius")
+            time.sleep(self.get_sleep_value(a=8, b=10))
             search_radius = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "radius"))
             )
@@ -157,8 +163,7 @@ class AahaScraper:
             search_radius.send_keys(miles)
             
             # City field
-            time.sleep(self.get_sleep_value(a=5, b=10))
-            # city_input = self.driver.find_element(By.NAME, "city")
+            time.sleep(self.get_sleep_value(a=8, b=10))
             city_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "city"))
             )
@@ -166,8 +171,7 @@ class AahaScraper:
             city_input.send_keys(self.city)
 
             # State field
-            time.sleep(self.get_sleep_value(a=5, b=10))
-            # state_input = self.driver.find_element(By.NAME, "stateProvince")
+            time.sleep(self.get_sleep_value(a=8, b=10))
             state_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "stateProvince"))
             )
@@ -175,17 +179,15 @@ class AahaScraper:
             state_input.send_keys(self.state)
 
             # Country radio button
-            time.sleep(self.get_sleep_value(a=5, b=10))
+            time.sleep(self.get_sleep_value(a=8, b=10))
             country_radio_id = "__BVID__87" if self.country == "United States" else "__BVID__88"
-            # country_radio = self.driver.find_element(By.ID, country_radio_id)
             country_radio = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, country_radio_id))
             )
             country_radio.click()
 
             # Click Search
-            time.sleep(self.get_sleep_value(a=7, b=10))
-            # search_button = self.driver.find_element(By.ID, "locator-search")
+            time.sleep(self.get_sleep_value(a=8, b=11))
             search_button = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "locator-search"))
             )
@@ -196,19 +198,19 @@ class AahaScraper:
                 EC.presence_of_element_located((By.CLASS_NAME, "hospital-locator"))
             ).text.strip()
             
-            if not refresh:
-                no_results_str = "try again"
-                results_str = "You are here"
-                if no_results_str in hospital_locator:
-                    logger.info(f"No results found for {self.city}, {self.state}, {self.country}")
-                    return None
-                elif results_str in hospital_locator:
-                    results_soup = BeautifulSoup(self.driver.page_source, "html.parser")
-                    logger.info(f"Results found for {self.city}, {self.state}, {self.country}, proceeding...")
+            if "try again" in hospital_locator:
+                logger.info(f"No results found for {self.city}, {self.state}, {self.country}")
+                return None
+            elif "You are here" in hospital_locator:
+                results_soup = BeautifulSoup(self.driver.page_source, "html.parser")
+                logger.info(f"Results found for {self.city}, {self.state}, {self.country}, proceeding...")
+                if not refresh:
                     hospital_results = self.process_search_results(results_soup)
                     return hospital_results
                 else:
-                    raise
+                    return "refreshed!"
+            else:
+                raise
         except Exception as e:
             logger.error(f"Failed searching for {self.city}, {self.state}, {self.country}")
             return None
@@ -276,26 +278,19 @@ class AahaScraper:
             max_retries = 3
             attempts = 0
             result = False
-            while not result and attempts < max_retries:
+            while not result and attempts <= max_retries:
                 try:
                     time.sleep(self.get_sleep_value())
                     hospital_locator_results_list = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.ID, "hospitalLocatorResultsList"))
                     )
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
-                        hospital_locator_results_list
-                    )
+                    
                     time.sleep(self.get_sleep_value())
-                    # name_element = self.driver.find_element(By.XPATH, f"//a[@class='recno-lookup']//strong[text()='{hospital_name}']")
-                    # name_element = WebDriverWait(self.driver, wait_time).until(
-                    #     EC.presence_of_element_located((By.XPATH, f"//a[@class='recno-lookup']//strong[text()='{hospital_name.strip()}']"))
-                    # )
                     name_element = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{hospital_name.strip()}')]"))
                     )
+                    self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", name_element)
                     time.sleep(self.get_sleep_value())
-                    # name_element.click()
                     self.driver.execute_script("arguments[0].click();", name_element)
                     result = self.process_hospital_details(hospital_name=hospital_name)
                 except Exception as e:
@@ -311,8 +306,18 @@ class AahaScraper:
                     time.sleep(self.get_sleep_value())
                 else:
                     logger.info(f"re-trying to fetch {hospital_name} details...")
-                    time.sleep(self.get_sleep_value(a=70, b=80))
-                    self.open_search_page(refresh=True)
+                    if attempts == 0:
+                        self.driver.quit()
+                        time.sleep(self.get_sleep_value(a=45, b=60))
+                        self.driver = uc.Chrome(options=self.options, use_subprocess=True)
+                    refresh_att = 3
+                    current_att = 0
+                    refreshed = "Search not refreshed yet!"
+                    while refreshed != "refreshed!" and current_att <= refresh_att:
+                        time.sleep(self.get_sleep_value(a=30, b=60))
+                        refreshed = self.open_search_page(refresh=True)
+                        logger.info(refreshed)
+                        current_att += 1
                 attempts += 1
                 gc.collect()
         return self.extracted_data
@@ -426,7 +431,7 @@ class AahaScraper:
         df = pd.DataFrame(extracted_data)
         for col in df.columns:
             df[col] = df[col].apply(lambda x: "; ".join(x) if isinstance(x, list) else str(x) if isinstance(x, dict) else x)
-        df.insert(0, 'State', self.state.title())
+        df.insert(0, 'State', self.state)
         df.insert(1, 'City', self.city.title())
         df.to_excel(file_path, index=False)
         self.extracted_data = []
