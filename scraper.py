@@ -39,7 +39,7 @@ COLUMNS = (
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,  # Capture all levels of logs
+    level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
         logging.FileHandler(log_file),  # Log to file
@@ -54,6 +54,7 @@ class AahaScraper:
     def __init__(self):
         self.search_url = "https://www.aaha.org/for-pet-parents/find-an-aaha-accredited-animal-hospital-near-me/"
         self.extracted_data = []
+        self.hospital_names = []
         self.driver = None
         self.city = ""
         self.state = ""
@@ -62,6 +63,7 @@ class AahaScraper:
     def get_driver(self):
         """Initializes or reinitializes the ChromeDriver if necessary."""
         options = uc.ChromeOptions()
+        
         user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
@@ -171,7 +173,7 @@ class AahaScraper:
             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
 
             # Search radius
-            time.sleep(self.get_sleep_value(a=8, b=10))
+            time.sleep(self.get_sleep_value(a=3, b=5))
             search_radius = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "radius"))
             )
@@ -179,7 +181,7 @@ class AahaScraper:
             search_radius.send_keys(miles)
             
             # City field
-            time.sleep(self.get_sleep_value(a=8, b=10))
+            time.sleep(self.get_sleep_value(a=2, b=4))
             city_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "city"))
             )
@@ -187,7 +189,7 @@ class AahaScraper:
             city_input.send_keys(self.city)
 
             # State field
-            time.sleep(self.get_sleep_value(a=8, b=10))
+            time.sleep(self.get_sleep_value(a=3, b=5))
             state_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "stateProvince"))
             )
@@ -195,7 +197,7 @@ class AahaScraper:
             state_input.send_keys(self.state)
 
             # Country radio button
-            time.sleep(self.get_sleep_value(a=8, b=10))
+            time.sleep(self.get_sleep_value(a=2, b=5))
             country_radio_id = "__BVID__87" if self.country == "United States" else "__BVID__88"
             country_radio = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, country_radio_id))
@@ -215,17 +217,13 @@ class AahaScraper:
             ).text.strip()
             
             if not refresh:
-                if "Please refine your search criteria" in hospital_locator:
-                    logger.info(f"No results found for {self.city}, {self.state}, {self.country}")
-                    return None, True
+                if "Please refine your search criteria" in hospital_locator or "You are here" in hospital_locator:
+                    status = "Yes!" if "You are here" in hospital_locator else "No"
+                    logger.info(f"{status} results found for {self.city}, {self.state}, {self.country}")
+                    return True, status
                 elif "we could not verify your request" in hospital_locator:
-                    logger.info(f"No results found for {self.city}, {self.state}, {self.country}")
-                    return None, False
-                elif "You are here" in hospital_locator:
-                    results_soup = BeautifulSoup(self.driver.page_source, "html.parser")
-                    logger.info(f"Results found for {self.city}, {self.state}, {self.country}, proceeding...")
-                    hospital_results = self.process_search_results(results_soup)
-                    return hospital_results, True
+                    logger.info(f"Couldn't search for {self.city}, {self.state}, {self.country}, retrying...")
+                    return False, None
                 else:
                     raise
             else:
@@ -234,17 +232,31 @@ class AahaScraper:
                     return ""
                 return "refreshed!"
         except Exception as e:
-            logger.error(f"Failed!!! while searching for {self.city}, {self.state}, {self.country}")
-            return None, False
+            logger.error(f"Failed!! while searching for {self.city}, {self.state}, {self.country}")
+            return False, None
+        
+    
+    def refresh_search_results(self):
+        refreshed = ""
+        self.close_driver()
+        time.sleep(self.get_sleep_value())
+        self.driver = self.get_driver()
+        while refreshed != "refreshed!":
+            time.sleep(self.get_sleep_value(a=7, b=10))
+            refreshed = self.open_search_page(refresh=True)
+        return refreshed
             
 
-    def process_search_results(self, results_soup):
+    def process_search_results(self):
         """
         Extracts search results from the page:
         - Extracts JavaScript variable `var locations` from the page source.
         - Parses it into JSON and returns structured data.
         """
         try:
+            results_soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            time.sleep(self.get_sleep_value(a=2, b=3))
+            
             WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.ID, "hospitalLocatorResultsList"))
             )
@@ -273,29 +285,29 @@ class AahaScraper:
                     "Distance": loc.get("distance", "N/A"),
                     "Practice": loc.get("icon", "N/A"),
                 })
-        except Exception as e:
-            logger.error("Error extracting hospital locations:", e)
 
-        # Extract hospital names & URLs from `hospitalLocatorResultsList` and merge with extracted_data
-        try:
-            hospital_names = []
             hospital_list = results_soup.find("div", id="hospitalLocatorResultsList").find_all(class_='recno-lookup')
             for hospital in hospital_list:
                 try:
                     name = hospital.text.strip()
-                    hospital_names.append(name)
+                    self.hospital_names.append(name)
                 except NoSuchElementException:
                     continue
+
+            time.sleep(self.get_sleep_value(a=1, b=2))
+            logger.info(f"Hospital Names : {self.hospital_names}")
+            return True
+        
         except Exception as e:
-            logger.error("Error extracting hospital details:", e)
+            logger.error(f"Error extracting data from search results : {e}")
+            return False
 
-        # Click each hospital link, extract details, then go back
-        time.sleep(self.get_sleep_value(a=1, b=2))
-        logger.info(f"Hospital Names : {hospital_names}")
 
+    def extract_from_pages(self): 
+        wait_time = 10
+        
         # Extract hospitals in batch of 5
-        wait_time = 20
-        for index, hospital_name in enumerate(hospital_names, start=1):
+        for index, hospital_name in enumerate(self.hospital_names, start=1):
             if index % 5 == 0:
                 self.refresh_search_results()
                 time.sleep(self.get_sleep_value(a=3, b=5))
@@ -311,19 +323,24 @@ class AahaScraper:
                         EC.presence_of_element_located((By.ID, "hospitalLocatorResultsList"))
                     )
                     
-                    time.sleep(self.get_sleep_value())
+                    time.sleep(self.get_sleep_value(a=5, b=7))
                     name_element = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{hospital_name.strip()}')]"))
                     )
+                    
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", name_element)
-                    time.sleep(self.get_sleep_value())
+                    
+                    time.sleep(self.get_sleep_value(a=5, b=7))
                     self.driver.execute_script("arguments[0].click();", name_element)
-                    result = self.process_hospital_details(hospital_name=hospital_name)
+                    
+                    result = self.process_hospital_page(hospital_name=hospital_name)
+                    
                 except Exception as e:
                     logger.error(f"Error visiting hospital details page: {e}")
                     
                 logger.info(f"Extraction status ---> {result}")
-                time.sleep(self.get_sleep_value())
+                time.sleep(self.get_sleep_value(a=7, b=10))
+                
                 if result:
                     self.driver.back()
                     WebDriverWait(self.driver, wait_time).until(
@@ -333,29 +350,20 @@ class AahaScraper:
                 else:
                     logger.info(f"re-trying to fetch {hospital_name} details...")
                     self.refresh_search_results()
+                    
                 attempts += 1
             gc.collect()
-        return self.extracted_data
-    
-
-    def refresh_search_results(self):
-        refreshed = ""
-        while refreshed != "refreshed!":
-            self.close_driver()
-            time.sleep(self.get_sleep_value())
-            self.driver = self.get_driver()
-            time.sleep(self.get_sleep_value(a=3, b=5))
-            refreshed = self.open_search_page(refresh=True)
-        return refreshed
+        return True
 
 
-    def process_hospital_details(self, hospital_name):
+    def process_hospital_page(self, hospital_name):
         """
         Extracts additional hospital details from the individual hospital page.
         Updates the corresponding entry in extracted_data.
         """
-        time.sleep(self.get_sleep_value(a=20, b=25))
-        WebDriverWait(self.driver, 20).until(
+        time.sleep(self.get_sleep_value(a=10, b=12))
+        
+        WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.ID, "hospitalLocatorDetailsAboveMap"))
         )
         try:
@@ -430,7 +438,7 @@ class AahaScraper:
         return False
  
             
-    def standardize_extracted_data(self, extracted_data):
+    def standardize_data(self, extracted_data):
         """
         Ensures all dictionaries in extracted_data have the same keys.
         Missing keys are added using the predefined COLUMNS tuple.
@@ -461,6 +469,7 @@ class AahaScraper:
         df.insert(1, 'City', self.city.title())
         df.to_excel(file_path, index=False)
         self.extracted_data = []
+        self.hospital_names = []
         self.city = ""
         self.state = ""
         self.country = ""
@@ -504,15 +513,17 @@ class AahaScraper:
                     attempts = 0
                     max_tries = 3
                     while attempts <= max_tries and not success:
-                        extracted_data, success = self.open_search_page()
-                        if success:
-                            if extracted_data:
-                                uniform_data = self.standardize_extracted_data(extracted_data=extracted_data)
-                                self.save_to_excel(extracted_data=uniform_data)
-                                df.at[index, "Data"] = "added"
-                            else:
-                                df.at[index, "Data"] = "not found"
-                            break
+                        success, status = self.open_search_page()
+                        if success and status == "Yes!":
+                            success = self.process_search_results()
+                            if success:
+                                success = self.extract_from_pages()
+                                if success:
+                                    uniform_data = self.standardize_data(extracted_data=self.extracted_data)
+                                    self.save_to_excel(extracted_data=uniform_data)
+                                    df.at[index, "Data"] = "added"
+                        else:
+                            df.at[index, "Data"] = "not found"
                         attempts += 1
                 except KeyboardInterrupt:
                     logger.warning("Script interrupted manually. Skipping save operation.")
