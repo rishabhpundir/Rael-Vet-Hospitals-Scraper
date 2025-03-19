@@ -13,11 +13,13 @@ import pandas as pd
 from datetime import datetime
 from bs4 import BeautifulSoup
 from selenium_stealth import stealth
+from fake_useragent import UserAgent
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from process_zipcodes import process_zip_data
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support import expected_conditions as EC
 
 
@@ -60,50 +62,55 @@ class AahaScraper:
         self.state = ""
         self.country = ""
 
+
     def get_driver(self):
         """Initializes or reinitializes the ChromeDriver if necessary."""
-        options = uc.ChromeOptions()
         
-        user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Safari/537.36",
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Mobile Safari/537.36",
-            "Mozilla/5.0 (iPad; CPU OS 16_5 like Mac OS X) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.6998.88 Mobile Safari/537.36"
-        ]
-
-        # Pick a random User-Agent
-        random_user_agent = random.choice(user_agents)
-        proxy = None
-        
-        # Essential Anti-Bot Flags
-        # options.add_argument("--headless=new")
-        options.add_argument(f"user-agent={random_user_agent}")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--start-maximized")
-        options.add_argument("--disable-infobars")
-        options.add_argument("--enable-javascript")
-        options.add_argument('--disable-extensions')
-        options.add_argument("--window-size=800,450")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-popup-blocking")
-        # options.add_argument(f"--proxy-server={self.proxy}")
-        options.add_argument("--disable-ipc-flooding-protection")
-        options.add_argument("--js-flags=--max-old-space-size=1024")
-        options.add_argument("--disable-background-timer-throttling")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-
         if self.driver is None:
             for attempt in range(0, 3):
                 try:
+                    options = uc.ChromeOptions()
+                    ua = UserAgent() # Random user agents
+                    proxy = None
+                    
+                    # Essential Anti-Bot Flags
+                    # options.add_argument("--headless=new")
+                    options.add_argument("--no-sandbox")
+                    options.add_argument("--disable-gpu")
+                    options.add_argument("--enable-webgl")
+                    options.add_argument("--start-maximized")
+                    options.add_argument("--disable-infobars")
+                    options.add_argument("--enable-javascript")
+                    options.add_argument('--disable-extensions')
+                    options.add_argument("--window-size=1280,720")
+                    options.add_argument(f"user-agent={ua.random}")
+                    # options.add_argument(f"--proxy-server={proxy}")
+                    options.add_argument("--disable-notifications")
+                    options.add_argument("--disable-dev-shm-usage")
+                    options.add_argument("--disable-popup-blocking")
+                    options.add_argument("--disable-setuid-sandbox")
+                    options.add_argument("--remote-debugging-port=9222")
+                    options.add_argument("--disable-ipc-flooding-protection")
+                    options.add_argument("--js-flags=--max-old-space-size=1024")
+                    options.add_argument("--disable-background-timer-throttling")
+                    options.add_argument("--disable-blink-features=AutomationControlled")
+
+                    # driver init
                     self.driver = uc.Chrome(options=options, use_subprocess=True)
 
                     # Remove "webdriver" flag
-                    self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                        "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
-                    })
+                    self.driver.execute_cdp_cmd(
+                        "Page.addScriptToEvaluateOnNewDocument",
+                        {
+                            "source": r"""
+                                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                                Object.defineProperty(navigator, 'platform', {get: () => 'Win64'});
+                                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+                                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+                            """
+                        }
+                    )
 
                     # Apply stealth settings
                     stealth(self.driver,
@@ -122,13 +129,17 @@ class AahaScraper:
                 except Exception as e:
                     logger.error(f"Attempt {attempt + 1}: Failed to initialize driver - {e}")
                     time.sleep(3)
-            else:
-                raise Exception("Failed to initialize undetected_chromedriver after multiple attempts")
+        else:
+            raise Exception("Failed to initialize undetected_chromedriver after multiple attempts")
             
-        time.sleep(self.get_sleep_value(a=1, b=3))
+        time.sleep(self.get_sleep_value(a=1, b=2))
         self.driver.maximize_window()
-        time.sleep(self.get_sleep_value(a=1, b=3))
+        time.sleep(self.get_sleep_value(a=1, b=2))
         self.driver.execute_script("window.focus();")
+
+        self.driver.get("https://www.google.com")
+        time.sleep(self.get_sleep_value(a=3, b=5))
+
         return self.driver
 
 
@@ -138,6 +149,28 @@ class AahaScraper:
             self.driver.quit()
             self.driver = None
             logger.info("WebDriver successfully closed.")
+
+
+    def mouse_moves(self):
+        """
+        Simulate human-like mouse movements
+        """
+        actions = ActionChains(self.driver)
+        a = random.randint(10, 30)
+        b = random.randint(10, 30)
+        c = random.randint(80, 95)
+        actions.move_by_offset(a, b).perform()
+        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+
+        self.driver.execute_script(f"window.scrollBy(0, {c});")
+        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+
+        self.driver.execute_script(f"window.scrollBy(0, -{c});")
+        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+
+        element = self.driver.find_element(By.TAG_NAME, "body")
+        actions.move_to_element(element).perform()
+        time.sleep(self.get_sleep_value(a=1, b=1.5))
 
 
     def cleanup_chrome_processes(self):
@@ -154,7 +187,7 @@ class AahaScraper:
             logger.warning(f"Error while cleaning up Chrome processes: {e}")
 
 
-    def get_sleep_value(self, a=18, b=22):
+    def get_sleep_value(self, a=16, b=20):
         return random.uniform(a, b)
 
 
@@ -164,24 +197,29 @@ class AahaScraper:
         If the WebDriver crashes, it automatically restarts.
         """
         logger.info(f"Searching for: {self.city}, {self.state}, {self.country}...")
+
         try:
             self.driver.get(self.search_url)
-            time.sleep(self.get_sleep_value(a=8, b=10))
+
+            # Get search page
+            time.sleep(self.get_sleep_value(a=5, b=8))
             search_container = WebDriverWait(self.driver, 15).until(
                 EC.presence_of_element_located((By.ID, "hospitalLocatorSearchCriteria"))
             )
+            self.mouse_moves()  
             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", search_container)
 
-            # Search radius
-            time.sleep(self.get_sleep_value(a=3, b=5))
+            # Set Search radius
+            time.sleep(self.get_sleep_value(a=1, b=2))
             search_radius = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "radius"))
             )
             search_radius.clear()
             search_radius.send_keys(miles)
-            
+
             # City field
-            time.sleep(self.get_sleep_value(a=2, b=4))
+            self.mouse_moves()
+            time.sleep(self.get_sleep_value(a=1, b=2))
             city_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "city"))
             )
@@ -189,7 +227,8 @@ class AahaScraper:
             city_input.send_keys(self.city)
 
             # State field
-            time.sleep(self.get_sleep_value(a=3, b=5))
+            self.mouse_moves()
+            time.sleep(self.get_sleep_value(a=2, b=3))
             state_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "stateProvince"))
             )
@@ -197,25 +236,29 @@ class AahaScraper:
             state_input.send_keys(self.state)
 
             # Country radio button
-            time.sleep(self.get_sleep_value(a=2, b=5))
+            self.mouse_moves()
+            time.sleep(self.get_sleep_value(a=1, b=2))
             country_radio_id = "__BVID__87" if self.country == "United States" else "__BVID__88"
             country_radio = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, country_radio_id))
             )
-            country_radio.click()
+            self.driver.execute_script("arguments[0].click();", country_radio)
 
-            # Click Search
-            time.sleep(self.get_sleep_value(a=8, b=11))
+            # Submit from by clicking "Search" button
+            self.mouse_moves()
+            time.sleep(self.get_sleep_value(a=1, b=2))
             search_button = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "locator-search"))
             )
-            search_button.click()
+            self.mouse_moves()
+            self.driver.execute_script("arguments[0].click();", search_button)
 
-            time.sleep(self.get_sleep_value())
+            # check search results page
+            time.sleep(self.get_sleep_value(a=8, b=12))
             hospital_locator = WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "hospital-locator"))
             ).text.strip()
-            
+
             if not refresh:
                 if "Please refine your search criteria" in hospital_locator or "You are here" in hospital_locator:
                     status = "Yes!" if "You are here" in hospital_locator else "No"
@@ -232,10 +275,10 @@ class AahaScraper:
                     return ""
                 return "refreshed!"
         except Exception as e:
-            logger.error(f"Failed!! while searching for {self.city}, {self.state}, {self.country}")
+            logger.error(f"Failed!! while searching for {self.city}, {self.state}, {self.country} : \n {e}")
             return False, None
+
         
-    
     def refresh_search_results(self):
         refreshed = ""
         self.close_driver()
@@ -268,9 +311,10 @@ class AahaScraper:
                 logger.error("No location data found in page source.")
                 return []
 
-            locations_json = match.group(1)
-            locations = json.loads(locations_json)
-            logger.info(f"JS match found --> {locations}")
+            json_data = match.group(1)
+            locations = json.loads(json_data)
+            json_saved = self.save_locations_json_data(json_data=json_data)
+            logger.info(f"{json_saved}")
             time.sleep(self.get_sleep_value(a=1, b=2))
 
             for loc in locations:
@@ -295,7 +339,10 @@ class AahaScraper:
                     continue
 
             time.sleep(self.get_sleep_value(a=1, b=2))
-            logger.info(f"Hospital Names : {self.hospital_names}")
+            logger.info(f"Facility Names : ")
+            logger.info("=" * 20)
+            for index, hospital_value in enumerate(self.hospital_names, start=1):
+                logger.info(f"{index}. {hospital_value}")
             return True
         
         except Exception as e:
@@ -308,29 +355,26 @@ class AahaScraper:
         
         # Extract hospitals in batch of 5
         for index, hospital_name in enumerate(self.hospital_names, start=1):
-            if index % 5 == 0:
-                self.refresh_search_results()
-                time.sleep(self.get_sleep_value(a=3, b=5))
-
-            logger.info(f"Extracting details for --> {hospital_name}...")
+            logger.info('-' * 30)
+            logger.info(f"{index}. Extracting details for --> {hospital_name}...")
             max_retries = 3
             attempts = 0
             result = False
             while not result and attempts <= max_retries:
                 try:
-                    time.sleep(self.get_sleep_value())
+                    time.sleep(self.get_sleep_value(a=4, b=5))
                     WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.ID, "hospitalLocatorResultsList"))
                     )
                     
-                    time.sleep(self.get_sleep_value(a=5, b=7))
+                    time.sleep(self.get_sleep_value(a=3, b=4))
                     name_element = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{hospital_name.strip()}')]"))
                     )
-                    
+                    self.mouse_moves()
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", name_element)
                     
-                    time.sleep(self.get_sleep_value(a=5, b=7))
+                    time.sleep(self.get_sleep_value(a=2, b=3))
                     self.driver.execute_script("arguments[0].click();", name_element)
                     
                     result = self.process_hospital_page(hospital_name=hospital_name)
@@ -339,17 +383,19 @@ class AahaScraper:
                     logger.error(f"Error visiting hospital details page: {e}")
                     
                 logger.info(f"Extraction status ---> {result}")
-                time.sleep(self.get_sleep_value(a=7, b=10))
+                time.sleep(self.get_sleep_value(a=3, b=5))
                 
                 if result:
                     self.driver.back()
                     WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.ID, "hospitalLocatorResults"))
                     )
-                    time.sleep(self.get_sleep_value())
+                    self.mouse_moves()
+                    time.sleep(self.get_sleep_value(a=3, b=5))
                 else:
-                    logger.info(f"re-trying to fetch {hospital_name} details...")
+                    logger.info(f"<<>> Refreshing search results... to continue with -->  {hospital_name} <<>>")
                     self.refresh_search_results()
+                    time.sleep(self.get_sleep_value(a=2, b=3))
                     
                 attempts += 1
             gc.collect()
@@ -361,8 +407,8 @@ class AahaScraper:
         Extracts additional hospital details from the individual hospital page.
         Updates the corresponding entry in extracted_data.
         """
-        time.sleep(self.get_sleep_value(a=10, b=12))
-        
+        time.sleep(self.get_sleep_value(a=3, b=5))
+        self.mouse_moves()
         WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.ID, "hospitalLocatorDetailsAboveMap"))
         )
@@ -455,6 +501,41 @@ class AahaScraper:
         return extracted_data
 
 
+    def save_locations_json_data(self, json_data):
+        """
+        To save the initial location data from search results page into a JSON file.
+        """
+        # Ensure the directory exists
+        date_stamp = datetime.now().strftime('%Y%m%d')
+        file_path = os.path.join(os.path.join(OUTPUT_FOLDER, 'json'), f"locations_json_{date_stamp}.json")
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Load existing data if file exists or start with an empty dictionary
+        if os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as file:
+                    existing_data = json.load(file)
+            except (json.JSONDecodeError, IOError):
+                existing_data = {}
+        else:
+            existing_data = {}
+
+        # Ensure json_data is properly formatted
+        if isinstance(json_data, str):
+            try:
+                json_data = json.loads(json_data)
+            except json.JSONDecodeError:
+                pass
+
+        # Save the updated data back to the file
+        key = f'{self.city}_{self.state}'
+        existing_data[key] = json_data
+        with open(file_path, 'w', encoding='utf-8') as file:
+            json.dump(existing_data, file, indent=4)
+        
+        return f"Success! Locations JSON data saved to --> {file_path}"
+
+
     def save_to_excel(self, extracted_data):
         """
         Saves extracted_data (list of dicts) into an Excel file.
@@ -492,7 +573,7 @@ class AahaScraper:
                 self.country = country
                 self.city, self.state = row["City"], row["State"]
 
-                if row['Data'].strip() in ("added", "not found"):
+                if str(row['Data']).strip() in ("added", "not found"):
                     continue
 
                 time.sleep(self.get_sleep_value(a=1, b=3))
@@ -501,7 +582,7 @@ class AahaScraper:
 
                 # Check if driver is still active
                 if self.driver is None or not self.driver.session_id:
-                    logger.warning("WebDriver session is invalid or closed. Restarting driver...")
+                    logger.warning("Web driver is not initialised. Restarting it...")
                     self.close_driver()
                     self.driver = self.get_driver()
                     time.sleep(self.get_sleep_value(a=1, b=3))
@@ -559,7 +640,6 @@ class AahaScraper:
 if __name__ == "__main__":
     aaha_scraper = AahaScraper()
     aaha_scraper.scraper()
-
 
 
 
