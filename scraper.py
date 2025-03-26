@@ -74,7 +74,7 @@ class AahaScraper:
                     proxy = None
                     
                     # Essential Anti-Bot Flags
-                    # options.add_argument("--headless=new")
+                    options.add_argument("--headless=new")
                     options.add_argument("--no-sandbox")
                     options.add_argument("--disable-gpu")
                     options.add_argument("--enable-webgl")
@@ -82,7 +82,7 @@ class AahaScraper:
                     options.add_argument("--disable-infobars")
                     options.add_argument("--enable-javascript")
                     options.add_argument('--disable-extensions')
-                    options.add_argument("--window-size=1280,720")
+                    options.add_argument("--window-size=1920x1080")
                     options.add_argument(f"user-agent={ua.random}")
                     # options.add_argument(f"--proxy-server={proxy}")
                     options.add_argument("--disable-notifications")
@@ -594,6 +594,7 @@ class AahaScraper:
                     attempts = 0
                     max_tries = 3
                     while attempts <= max_tries and not success:
+                        time.sleep(self.get_sleep_value(a=8, b=10))
                         success, status = self.open_search_page()
                         if success and status == "Yes!":
                             success = self.process_search_results()
@@ -626,8 +627,8 @@ class AahaScraper:
         """
         try:
             us_zip_path, can_zip_path = process_zip_data()
-            us_df = pd.read_excel(us_zip_path)
-            can_df = pd.read_excel(can_zip_path)
+            us_df = pd.read_excel(us_zip_path, engine="openpyxl")
+            can_df = pd.read_excel(can_zip_path, engine="openpyxl")
             us_df["Data"] = us_df["Data"].astype("object").fillna("")
             can_df["Data"] = us_df["Data"].astype("object").fillna("")
             df_dict = {"United States": [us_df, us_zip_path], "Canada": [can_df, can_zip_path]}
