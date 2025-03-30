@@ -17,6 +17,7 @@ from fake_useragent import UserAgent
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from process_zipcodes import process_zip_data
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -55,12 +56,15 @@ logger = logging.getLogger(__name__)
 class AahaScraper:
     def __init__(self):
         self.search_url = "https://www.aaha.org/for-pet-parents/find-an-aaha-accredited-animal-hospital-near-me/"
+        self.random_sites = ["https://www.google.com", "https://www.youtube.com", "https://www.bing.com", 
+                             "https://www.microsoft.com", "https://www.instagram.com", "https://www.facebook.com"]
         self.extracted_data = []
         self.hospital_names = []
         self.driver = None
         self.city = ""
         self.state = ""
         self.country = ""
+        self.headless = False
 
 
     def get_driver(self):
@@ -74,29 +78,19 @@ class AahaScraper:
                     proxy = None
                     
                     # Essential Anti-Bot Flags
-                    options.add_argument("--headless=new")
-                    options.add_argument("--no-sandbox")
+                    
+                    if self.headless:
+                        options.add_argument("--headless")
+                        
                     options.add_argument("--disable-gpu")
-                    options.add_argument("--enable-webgl")
-                    options.add_argument("--start-maximized")
                     options.add_argument("--disable-infobars")
-                    options.add_argument("--enable-javascript")
-                    options.add_argument('--disable-extensions')
-                    options.add_argument("--window-size=1920x1080")
                     options.add_argument(f"user-agent={ua.random}")
-                    # options.add_argument(f"--proxy-server={proxy}")
-                    options.add_argument("--disable-notifications")
                     options.add_argument("--disable-dev-shm-usage")
-                    options.add_argument("--disable-popup-blocking")
-                    options.add_argument("--disable-setuid-sandbox")
-                    options.add_argument("--remote-debugging-port=9222")
-                    options.add_argument("--disable-ipc-flooding-protection")
-                    options.add_argument("--js-flags=--max-old-space-size=1024")
-                    options.add_argument("--disable-background-timer-throttling")
                     options.add_argument("--disable-blink-features=AutomationControlled")
 
                     # driver init
                     self.driver = uc.Chrome(options=options, use_subprocess=True)
+                    self.driver.set_page_load_timeout(300)
 
                     # Remove "webdriver" flag
                     self.driver.execute_cdp_cmd(
@@ -113,14 +107,16 @@ class AahaScraper:
                     )
 
                     # Apply stealth settings
-                    stealth(self.driver,
-                        languages=["en-US", "en"],
-                        vendor="Google Inc." if platform.system() != "Darwin" else "Apple Computer, Inc.",
-                        platform="Win64" if platform.system() != "Darwin" else "MacIntel",
-                        webgl_vendor="Intel Inc." if platform.system() != "Darwin" else "Apple Inc.",
-                        renderer="Intel Iris OpenGL Engine" if platform.system() != "Darwin" else "Apple M1",
-                        fix_hairline=True,
-                    )
+                    if not self.headless:
+                        logger.info("Adding stealth settings...")
+                        stealth(self.driver,
+                            languages=["en-US", "en"],
+                            vendor="Google Inc." if platform.system() != "Darwin" else "Apple Computer, Inc.",
+                            platform="Win64" if platform.system() != "Darwin" else "MacIntel",
+                            webgl_vendor="Intel Inc." if platform.system() != "Darwin" else "Apple Inc.",
+                            renderer="Intel Iris OpenGL Engine" if platform.system() != "Darwin" else "Apple M1",
+                            fix_hairline=True,
+                        )
 
                     logger.info("WebDriver successfully initialized.")
                     logger.info(f"Current Browser version ---> {self.driver.capabilities['browserVersion']}")
@@ -132,13 +128,18 @@ class AahaScraper:
         else:
             raise Exception("Failed to initialize undetected_chromedriver after multiple attempts")
             
-        time.sleep(self.get_sleep_value(a=1, b=2))
-        self.driver.maximize_window()
-        time.sleep(self.get_sleep_value(a=1, b=2))
-        self.driver.execute_script("window.focus();")
+        if not self.headless:
+            time.sleep(self.get_sleep_value(a=1, b=2))
+            self.driver.maximize_window()
+            self.driver.execute_script("window.focus();")
 
-        self.driver.get("https://www.google.com")
-        time.sleep(self.get_sleep_value(a=3, b=5))
+        random.shuffle(self.random_sites)
+        for site in self.random_sites[:4]:
+            self.driver.get(site)
+            time.sleep(self.get_sleep_value(a=1, b=1.5))
+            
+        self.driver.get("https://aaha.org")
+        time.sleep(self.get_sleep_value(a=4, b=6))
 
         return self.driver
 
@@ -153,38 +154,47 @@ class AahaScraper:
 
     def mouse_moves(self):
         """
-        Simulate human-like mouse movements
+        Simulate human-like mouse movements and add random key presses.
         """
-        actions = ActionChains(self.driver)
-        a = random.randint(10, 30)
-        b = random.randint(10, 30)
-        c = random.randint(80, 95)
-        actions.move_by_offset(a, b).perform()
-        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+        # Only attempt these 'human-like' actions if not headless
+        if not self.headless:
+            actions = ActionChains(self.driver)
+            
+            # Random small move offset
+            a = random.randint(10, 30)
+            b = random.randint(10, 30)
+            c = random.randint(80, 95)
 
-        self.driver.execute_script(f"window.scrollBy(0, {c});")
-        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            # 1) Random offset move
+            actions.move_by_offset(a, b).perform()
+            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
 
-        self.driver.execute_script(f"window.scrollBy(0, -{c});")
-        time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            # 2) Scroll down
+            self.driver.execute_script(f"window.scrollBy(0, {c});")
+            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
 
-        element = self.driver.find_element(By.TAG_NAME, "body")
-        actions.move_to_element(element).perform()
+            # 3) Scroll up
+            self.driver.execute_script(f"window.scrollBy(0, -{c});")
+            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+
+            # 4) Move to <body> element
+            element = self.driver.find_element(By.TAG_NAME, "body")
+            actions.move_to_element(element).perform()
+            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+
+            # 5) Random key presses to look more "human"
+            possible_keys = [Keys.ARROW_DOWN, Keys.ARROW_UP, 
+                             Keys.ARROW_LEFT, Keys.ARROW_RIGHT]
+            
+            # We'll do up to 3 random key presses:
+            for _ in range(random.randint(1, 3)):
+                key_to_press = random.choice(possible_keys)
+                actions.send_keys(key_to_press).perform()
+                time.sleep(self.get_sleep_value(a=0.2, b=0.5))
+
+        # A small pause at the end, whether headless or not
         time.sleep(self.get_sleep_value(a=1, b=1.5))
 
-
-    def cleanup_chrome_processes(self):
-        """Kills lingering Chrome processes to prevent memory leaks, cross-platform."""
-        try:
-            for process in psutil.process_iter(attrs=["pid", "name"]):
-                if process.info["name"] and "chrome" in process.info["name"].lower():
-                    if platform.system() == "Windows":
-                        process.terminate()
-                    else:
-                        os.kill(process.info["pid"], signal.SIGTERM) 
-                    logger.info(f"Terminated lingering Chrome process: PID {process.info['pid']}")
-        except Exception as e:
-            logger.warning(f"Error while cleaning up Chrome processes: {e}")
 
 
     def get_sleep_value(self, a=16, b=20):
@@ -368,8 +378,11 @@ class AahaScraper:
                     )
                     
                     time.sleep(self.get_sleep_value(a=3, b=4))
+                    escaped_name = hospital_name.replace("'", "\\'")
                     name_element = WebDriverWait(self.driver, wait_time).until(
-                        EC.presence_of_element_located((By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{hospital_name.strip()}')]"))
+                        EC.presence_of_element_located(
+                            (By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{escaped_name.strip()}')]")
+                        )
                     )
                     self.mouse_moves()
                     self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center', inline: 'nearest'});", name_element)
@@ -621,10 +634,11 @@ class AahaScraper:
                 gc.collect()
 
 
-    def scraper(self):
+    def scraper(self, headless):
         """
         initialises the scraper by reading processed input files from zipcodes.
         """
+        self.headless = headless
         try:
             us_zip_path, can_zip_path = process_zip_data()
             us_df = pd.read_excel(us_zip_path, engine="openpyxl")
@@ -639,8 +653,9 @@ class AahaScraper:
         
     
 if __name__ == "__main__":
+    headless = False
     aaha_scraper = AahaScraper()
-    aaha_scraper.scraper()
+    aaha_scraper.scraper(headless=headless)
 
 
 
