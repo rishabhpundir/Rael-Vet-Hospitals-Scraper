@@ -177,5 +177,5 @@ venv
 *.zip
 __pycache__/
 __pycache__
-*.xlsx
 json/
+/logs/

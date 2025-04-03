@@ -3,8 +3,6 @@ import os
 import gc
 import time
 import json
-import psutil
-import signal
 import random
 import logging
 import platform
@@ -12,12 +10,12 @@ import traceback
 import pandas as pd
 from datetime import datetime
 from bs4 import BeautifulSoup
+from selenium import webdriver
+from utils import get_input_files
 from selenium_stealth import stealth
-from fake_useragent import UserAgent
-import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
-from process_zipcodes import process_zip_data
 from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
@@ -26,6 +24,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 # input/output files Config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROXY_PATH = os.path.join(BASE_DIR, os.path.join('proxy', 'auth.zip'))
 LOGS_FOLDER = os.path.join(BASE_DIR, 'logs')
 OUTPUT_FOLDER = os.path.join(BASE_DIR, 'output')
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -56,8 +55,8 @@ logger = logging.getLogger(__name__)
 class AahaScraper:
     def __init__(self):
         self.search_url = "https://www.aaha.org/for-pet-parents/find-an-aaha-accredited-animal-hospital-near-me/"
-        self.random_sites = ["https://www.google.com", "https://www.youtube.com", "https://www.bing.com", 
-                             "https://www.microsoft.com", "https://www.instagram.com", "https://www.facebook.com"]
+        self.random_sites = ["https://1mb.club/", "http://bettermotherfuckingwebsite.com/", 
+                             "https://t0.vc/", "https://motherfuckingwebsite.com/"]
         self.extracted_data = []
         self.hospital_names = []
         self.driver = None
@@ -67,57 +66,85 @@ class AahaScraper:
         self.headless = False
 
 
+    def is_raspberry_pi(self):
+        try:
+            machine = os.uname().machine
+            return machine.startswith("arm") or machine.startswith("aarch64")
+        except AttributeError:
+            return False
+
+
     def get_driver(self):
-        """Initializes or reinitializes the ChromeDriver if necessary."""
-        
+        """Initializes the WebDriver using the official ChromiumDriver."""
         if self.driver is None:
-            for attempt in range(0, 3):
+            for attempt in range(3):
                 try:
-                    options = uc.ChromeOptions()
-                    ua = UserAgent() # Random user agents
-                    proxy = None
-                    
-                    # Essential Anti-Bot Flags
-                    
+                    options = webdriver.ChromeOptions()
+                    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
+                    "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+                    if self.is_raspberry_pi():
+                        # Use Chromium on Raspberry Pi
+                        user_agent ="Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 " \
+                        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+                        chromium_path = "/usr/bin/chromium-browser"
+                        chromedriver_path = "/usr/bin/chromedriver"
+                        options.binary_location = chromium_path
+                        logger.info("Running on Raspberry Pi (ARM). Using Chromium.")
+                        service = Service(chromedriver_path)
+                    else:
+                        # Use Chrome on non-ARM systems
+                        logger.info("Running on non-ARM system. Using Chrome.")
+                        service = Service()  # Uses default chromedriver in PATH
+
+                    # --- Anti-Bot & Performance Settings ---
                     if self.headless:
-                        options.add_argument("--headless")
-                        
-                    options.add_argument("--disable-gpu")
+                        options.add_argument("--headless=new")
+
+                    # options.add_extension(f"{PROXY_PATH}")
                     options.add_argument("--disable-infobars")
-                    options.add_argument(f"user-agent={ua.random}")
+                    options.add_argument(f"user-agent={user_agent}")
                     options.add_argument("--disable-dev-shm-usage")
+                    options.add_argument("--force-major-version-to-minor")
+                    options.add_argument("--enable-features=UserAgentClientHint")
                     options.add_argument("--disable-blink-features=AutomationControlled")
+                    
 
-                    # driver init
-                    self.driver = uc.Chrome(options=options, use_subprocess=True)
-                    self.driver.set_page_load_timeout(300)
-
-                    # Remove "webdriver" flag
+                    # --- Initialize WebDriver ---
+                    self.driver = webdriver.Chrome(service=service, options=options)
+                    self.driver.set_page_load_timeout(180)
+                    self.driver.execute_cdp_cmd("Network.enable", {})
+                    
+                    # --- Stealth & WebDriver Evasion ---
                     self.driver.execute_cdp_cmd(
                         "Page.addScriptToEvaluateOnNewDocument",
                         {
                             "source": r"""
                                 Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
-                                Object.defineProperty(navigator, 'platform', {get: () => 'Win64'});
                                 Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
                                 Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
                             """
                         }
                     )
 
-                    # Apply stealth settings
+                    logger.info(f"User Agent: {user_agent}")
                     if not self.headless:
                         logger.info("Adding stealth settings...")
-                        stealth(self.driver,
-                            languages=["en-US", "en"],
-                            vendor="Google Inc." if platform.system() != "Darwin" else "Apple Computer, Inc.",
-                            platform="Win64" if platform.system() != "Darwin" else "MacIntel",
-                            webgl_vendor="Intel Inc." if platform.system() != "Darwin" else "Apple Inc.",
-                            renderer="Intel Iris OpenGL Engine" if platform.system() != "Darwin" else "Apple M1",
+                        languages = ["en-US", "en"]
+                        vendor = "WebKit" if platform.system() != "Linux" else "WebKit"
+                        platform_ = "Win32" if platform.system() != "Linux" else "Linux x86_64"
+                        webgl_vendor = "WebKit" if platform.system() != "Linux" else "WebKit"
+                        renderer = "WebKit WebGL" if platform.system() != "Linux" else  "WebKit WebGL"
+                        
+                        logger.info(f"Vendor: {vendor} Platform: {platform_} WebGL: {webgl_vendor} Renderer: {renderer}")
+                        stealth(
+                            self.driver,
+                            languages=languages,
+                            vendor=vendor,
+                            platform=platform_,
+                            webgl_vendor=webgl_vendor,
+                            renderer=renderer,
                             fix_hairline=True,
                         )
-
                     logger.info("WebDriver successfully initialized.")
                     logger.info(f"Current Browser version ---> {self.driver.capabilities['browserVersion']}")
                     logger.info(f"Chrome Driver's version ---> {self.driver.capabilities['chrome']['chromedriverVersion'].split(' ')[0]}")
@@ -127,19 +154,6 @@ class AahaScraper:
                     time.sleep(3)
         else:
             raise Exception("Failed to initialize undetected_chromedriver after multiple attempts")
-            
-        if not self.headless:
-            time.sleep(self.get_sleep_value(a=1, b=2))
-            self.driver.maximize_window()
-            self.driver.execute_script("window.focus();")
-
-        random.shuffle(self.random_sites)
-        for site in self.random_sites[:4]:
-            self.driver.get(site)
-            time.sleep(self.get_sleep_value(a=1, b=1.5))
-            
-        self.driver.get("https://aaha.org")
-        time.sleep(self.get_sleep_value(a=4, b=6))
 
         return self.driver
 
@@ -167,20 +181,20 @@ class AahaScraper:
 
             # 1) Random offset move
             actions.move_by_offset(a, b).perform()
-            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            time.sleep(self.get_sleep_value(a=0.5, b=0.7))
 
             # 2) Scroll down
             self.driver.execute_script(f"window.scrollBy(0, {c});")
-            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            time.sleep(self.get_sleep_value(a=0.5, b=0.7))
 
             # 3) Scroll up
             self.driver.execute_script(f"window.scrollBy(0, -{c});")
-            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            time.sleep(self.get_sleep_value(a=0.5, b=0.7))
 
             # 4) Move to <body> element
             element = self.driver.find_element(By.TAG_NAME, "body")
             actions.move_to_element(element).perform()
-            time.sleep(self.get_sleep_value(a=0.5, b=1.5))
+            time.sleep(self.get_sleep_value(a=0.5, b=0.7))
 
             # 5) Random key presses to look more "human"
             possible_keys = [Keys.ARROW_DOWN, Keys.ARROW_UP, 
@@ -195,6 +209,18 @@ class AahaScraper:
         # A small pause at the end, whether headless or not
         time.sleep(self.get_sleep_value(a=1, b=1.5))
 
+
+    def visit_random_sites(self):
+        if not self.headless:
+            time.sleep(self.get_sleep_value(a=1, b=2))
+            self.driver.maximize_window()
+            self.driver.execute_script("window.focus();")
+
+        time.sleep(self.get_sleep_value(a=1, b=1.5))
+        random.shuffle(self.random_sites)
+        for site in self.random_sites[:2]:
+            self.driver.get(site)
+            time.sleep(self.get_sleep_value(a=1, b=1.5))
 
 
     def get_sleep_value(self, a=16, b=20):
@@ -228,7 +254,6 @@ class AahaScraper:
             search_radius.send_keys(miles)
 
             # City field
-            self.mouse_moves()
             time.sleep(self.get_sleep_value(a=1, b=2))
             city_input = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.NAME, "city"))
@@ -255,12 +280,10 @@ class AahaScraper:
             self.driver.execute_script("arguments[0].click();", country_radio)
 
             # Submit from by clicking "Search" button
-            self.mouse_moves()
             time.sleep(self.get_sleep_value(a=1, b=2))
             search_button = WebDriverWait(self.driver, 10).until(
                 EC.presence_of_element_located((By.ID, "locator-search"))
             )
-            self.mouse_moves()
             self.driver.execute_script("arguments[0].click();", search_button)
 
             # check search results page
@@ -294,9 +317,12 @@ class AahaScraper:
         self.close_driver()
         time.sleep(self.get_sleep_value())
         self.driver = self.get_driver()
-        while refreshed != "refreshed!":
+        max_attempts = 3
+        attempts = 0
+        while refreshed != "refreshed!" and attempts <= max_attempts:
             time.sleep(self.get_sleep_value(a=7, b=10))
             refreshed = self.open_search_page(refresh=True)
+            attempts += 1
         return refreshed
             
 
@@ -378,10 +404,9 @@ class AahaScraper:
                     )
                     
                     time.sleep(self.get_sleep_value(a=3, b=4))
-                    escaped_name = hospital_name.replace("'", "\\'")
                     name_element = WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located(
-                            (By.XPATH, f"//a[contains(@class, 'recno-lookup')]/strong[contains(text(), '{escaped_name.strip()}')]")
+                            (By.XPATH, f"""//a[contains(@class, "recno-lookup")]/strong[contains(text(), "{hospital_name.strip()}")]""")
                         )
                     )
                     self.mouse_moves()
@@ -403,10 +428,9 @@ class AahaScraper:
                     WebDriverWait(self.driver, wait_time).until(
                         EC.presence_of_element_located((By.ID, "hospitalLocatorResults"))
                     )
-                    self.mouse_moves()
                     time.sleep(self.get_sleep_value(a=3, b=5))
                 else:
-                    logger.info(f"<<>> Refreshing search results... to continue with -->  {hospital_name} <<>>")
+                    logger.info(f"Refreshing search results... to continue with -->  {hospital_name}")
                     self.refresh_search_results()
                     time.sleep(self.get_sleep_value(a=2, b=3))
                     
@@ -421,7 +445,6 @@ class AahaScraper:
         Updates the corresponding entry in extracted_data.
         """
         time.sleep(self.get_sleep_value(a=3, b=5))
-        self.mouse_moves()
         WebDriverWait(self.driver, 10).until(
             EC.presence_of_element_located((By.ID, "hospitalLocatorDetailsAboveMap"))
         )
@@ -579,9 +602,9 @@ class AahaScraper:
             df = df_list[0]
             df_path = df_list[1]
             zip_folder = os.path.join(BASE_DIR, 'zipcodes')
-            us_city_backup_path = os.path.join(zip_folder, f'{country}_Processed_Backup.xlsx')
+            city_backup_path = os.path.join(zip_folder, f'{country}_Backup.xlsx')
             for index, row in df.iterrows():
-                df.to_excel(us_city_backup_path, index=False)
+                df.to_excel(city_backup_path, index=False)
                 success = False
                 self.country = country
                 self.city, self.state = row["City"], row["State"]
@@ -608,7 +631,9 @@ class AahaScraper:
                     max_tries = 3
                     while attempts <= max_tries and not success:
                         time.sleep(self.get_sleep_value(a=8, b=10))
+                        self.visit_random_sites()
                         success, status = self.open_search_page()
+                        
                         if success and status == "Yes!":
                             success = self.process_search_results()
                             if success:
@@ -640,12 +665,11 @@ class AahaScraper:
         """
         self.headless = headless
         try:
-            us_zip_path, can_zip_path = process_zip_data()
-            us_df = pd.read_excel(us_zip_path, engine="openpyxl")
-            can_df = pd.read_excel(can_zip_path, engine="openpyxl")
-            us_df["Data"] = us_df["Data"].astype("object").fillna("")
-            can_df["Data"] = us_df["Data"].astype("object").fillna("")
-            df_dict = {"United States": [us_df, us_zip_path], "Canada": [can_df, can_zip_path]}
+            file_paths = get_input_files()
+            with pd.ExcelFile(file_paths[0], engine="openpyxl") as xls:
+                sheets_dict = pd.read_excel(xls, sheet_name=None)
+
+            df_dict = {k:df.fillna("") for k, df in sheets_dict.items()}
             self.process_country_df(df_dict=df_dict)
             logger.info("Browser closed.")
         except Exception as e:
